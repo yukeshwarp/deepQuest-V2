@@ -31,7 +31,6 @@ def plan_research(query):
 
 def execute_step(step, context):
     """Execute a single research step using function calling and web search."""
-    # Enhanced prompt for execution
     exec_prompt = (
         f"You are a research agent. Execute the following research step:\n\n"
         f"Step: {step}\n\n"
@@ -70,14 +69,11 @@ def execute_step(step, context):
         import json
         search_args = json.loads(msg.function_call.arguments)
         web_results = search_google(search_args["query"])
-        # Optionally show function output
-        st.info(f"Function Output for step '{step}':\n\n{web_results}")
         messages.append({
             "role": "function",
             "name": "search_google",
             "content": web_results
         })
-        # Let LLM use the function output to answer
         response2 = client.chat.completions.create(
             model="gpt-4.1",
             messages=messages
@@ -89,9 +85,9 @@ def execute_step(step, context):
 def agentic_research(query):
     # 1. Plan
     steps = plan_research(query)
-    st.subheader("Research Plan")
-    for idx, step in enumerate(steps, 1):
-        st.markdown(f"**Step {idx}:** {step}")
+    plan_container = st.empty()
+    plan_lines = [f"**Step {idx+1}:** {step}\n" for idx, step in enumerate(steps)]
+    plan_container.write("\n".join(plan_lines))
 
     # 2. Execute steps, allow dynamic replanning if needed
     context = ""
@@ -99,13 +95,20 @@ def agentic_research(query):
     i = 0
     while i < len(steps):
         step = steps[i]
-        st.info(f"Executing Step {i+1}: {step}")
         result = execute_step(step, context)
         completed_steps.append((step, result))
         context += f"\nStep: {step}\nResult: {result}\n"
-        st.success(f"Result for Step {i+1}:\n{result}")
 
-        # Optionally, check if LLM suggests new steps (replanning)
+        # Update plan display to show completed steps (with checkmark)
+        plan_lines = []
+        for idx, s in enumerate(steps):
+            if idx < len(completed_steps):
+                plan_lines.append(f"✅ **Step {idx+1}:** {s}\n")
+            else:
+                plan_lines.append(f"**Step {idx+1}:** {s}\n")
+        plan_container.write("\n".join(plan_lines))
+
+        # Replanning: Only check after the last original or newly added step
         replan_prompt = (
             f"Given the completed steps and results so far:\n{context}\n\n"
             "Do you need to add any new steps to fully answer the original query? "
@@ -118,10 +121,15 @@ def agentic_research(query):
                 {"role": "user", "content": replan_prompt}
             ]
         )
-        replan_text = replan_response.choices[0].message.content.strip()
+        replan_text = replan_response.choices[0].message.content.strip().lower()
+        if "no additional steps needed" in replan_text:
+            i += 1
+            continue
+        # Parse new steps, avoid duplicates
         new_steps = [s.strip() for s in replan_text.split("\n") if s.strip() and s[0].isdigit()]
-        if new_steps:
-            steps.extend(new_steps)
+        for new_step in new_steps:
+            if new_step not in steps:
+                steps.append(new_step)
         i += 1  # Always increment to move to the next step
 
     # 3. Final synthesis/report
