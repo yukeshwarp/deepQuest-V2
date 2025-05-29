@@ -32,7 +32,7 @@ def plan_research(query):
 def execute_step(step, context):
     """Execute a single research step using function calling and web search."""
     exec_prompt = (
-        f"You are a research agent. Execute the following research step:\n\n"
+        f"You are an autonomous research agent. Execute the following research step:\n\n"
         f"Step: {step}\n\n"
         f"Context so far: {context}\n\n"
         "If you need up-to-date information, use the search_google function."
@@ -82,7 +82,7 @@ def execute_step(step, context):
     else:
         return msg.content
 
-def agentic_research(query):
+def agentic_research(query, max_replan_rounds=5, max_total_steps=20):
     # 1. Plan
     steps = plan_research(query)
     plan_container = st.empty()
@@ -93,7 +93,11 @@ def agentic_research(query):
     context = ""
     completed_steps = []
     i = 0
+    replan_rounds = 0
     while i < len(steps):
+        if len(steps) > max_total_steps:
+            st.warning("Maximum total steps reached. Stopping to prevent infinite loop.")
+            break
         step = steps[i]
         result = execute_step(step, context)
         completed_steps.append((step, result))
@@ -111,7 +115,7 @@ def agentic_research(query):
         # Replanning: Only check after the last original or newly added step
         replan_prompt = (
             f"Given the completed steps and results so far:\n{context}\n\n"
-            "Do you need to add any new steps to fully answer the original query? "
+            "As an autonomous agent, do you need to add any new steps to fully answer the original query? "
             "If yes, list them as a numbered list. If not, reply 'No additional steps needed.'"
         )
         replan_response = client.chat.completions.create(
@@ -124,18 +128,28 @@ def agentic_research(query):
         replan_text = replan_response.choices[0].message.content.strip().lower()
         if "no additional steps needed" in replan_text:
             i += 1
+            replan_rounds = 0  # Reset replan rounds if no new steps
             continue
         # Parse new steps, avoid duplicates
         new_steps = [s.strip() for s in replan_text.split("\n") if s.strip() and s[0].isdigit()]
-        for new_step in new_steps:
-            if new_step not in steps:
-                steps.append(new_step)
+        new_unique_steps = [new_step for new_step in new_steps if new_step not in steps]
+        if new_unique_steps:
+            steps.extend(new_unique_steps)
+            replan_rounds += 1
+            if replan_rounds > max_replan_rounds:
+                st.warning("Maximum replanning rounds reached. Stopping to prevent infinite loop.")
+                break
+        else:
+            replan_rounds += 1
+            if replan_rounds > max_replan_rounds:
+                st.warning("Maximum replanning rounds reached (no new unique steps). Stopping to prevent infinite loop.")
+                break
         i += 1  # Always increment to move to the next step
 
     # 3. Final synthesis/report
     report_prompt = (
         f"Given the following completed research steps and their results:\n{context}\n\n"
-        "Write a detailed, well-structured research report that answers the original query. "
+        "As an autonomous research agent, write a detailed, well-structured research report that answers the original query. "
         "Include attributions to sources where appropriate."
     )
     report_response = client.chat.completions.create(
@@ -148,7 +162,7 @@ def agentic_research(query):
     report = report_response.choices[0].message.content
     return report
 
-if st.button("Run Agentic Research") and query:
+if st.button("Research") and query:
     with st.spinner("Running agentic research..."):
         report = agentic_research(query)
         st.subheader("Final Research Report")

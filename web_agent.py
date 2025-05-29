@@ -10,6 +10,7 @@ import aiohttp
 import asyncio
 import logging
 from crawl4ai import AsyncWebCrawler
+import time
 
 # Setup logging
 logging.basicConfig(
@@ -28,6 +29,38 @@ NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 HEADERS = {
     "User-Agent": "MyApp/1.0 (contact@example.com)"  # Customize this with your contact
 }
+
+# --- Retry Decorator ---
+def retry_on_exception(max_retries=2, backoff=2):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    logging.warning(f"Attempt {attempt+1} failed for {func.__name__}: {e}")
+                    if attempt < max_retries:
+                        time.sleep(backoff)
+            logging.error(f"All retries failed for {func.__name__}: {last_exception}")
+            raise last_exception
+        return wrapper
+    return decorator
+
+# --- Asynchronous Retry Helper ---
+async def async_retry_on_exception(func, *args, max_retries=2, backoff=2, **kwargs):
+    last_exception = None
+    for attempt in range(max_retries + 1):
+        try:
+            return await func(*args, **kwargs)
+        except Exception as e:
+            last_exception = e
+            logging.warning(f"Async attempt {attempt+1} failed for {func.__name__}: {e}")
+            if attempt < max_retries:
+                await asyncio.sleep(backoff)
+    logging.error(f"All async retries failed for {func.__name__}: {last_exception}")
+    raise last_exception
 
 # --- Asynchronous Utilities ---
 
@@ -52,7 +85,7 @@ async def crawl_websites(urls, timeout=10):
     crawled_results = []
     try:
         async with aiohttp.ClientSession() as session:
-            tasks = [fetch_url(session, url, timeout=timeout) for url in urls]
+            tasks = [async_retry_on_exception(fetch_url, session, url, timeout=timeout) for url in urls]
             responses = await asyncio.gather(*tasks, return_exceptions=True)
             for idx, content in enumerate(responses):
                 if isinstance(content, Exception):
@@ -77,7 +110,10 @@ async def crawl_with_async_webcrawler(urls, timeout=20):
         async with AsyncWebCrawler() as crawler:
             for url in urls:
                 try:
-                    result = await asyncio.wait_for(crawler.arun(url=url), timeout=timeout)
+                    result = await asyncio.wait_for(
+                        async_retry_on_exception(crawler.arun, url=url, max_retries=2, backoff=2),
+                        timeout=timeout
+                    )
                     crawl_results.append(f"[Crawled Website (Markdown)] URL: {url}\n{result.markdown}\n")
                 except asyncio.TimeoutError:
                     logging.error(f"Timeout crawling {url} with AsyncWebCrawler")
@@ -91,6 +127,30 @@ async def crawl_with_async_webcrawler(urls, timeout=20):
 
 # --- Synchronous Main Search Function ---
 
+@retry_on_exception(max_retries=2, backoff=2)
+def google_search_api_call(google_search_url, google_params):
+    response = requests.get(google_search_url, params=google_params, timeout=15)
+    response.raise_for_status()
+    return response
+
+@retry_on_exception(max_retries=2, backoff=2)
+def arxiv_api_call(arxiv_url):
+    req = urllib.request.Request(arxiv_url, headers=HEADERS)
+    with urllib.request.urlopen(req, timeout=15) as response:
+        return response.read().decode("utf-8")
+
+@retry_on_exception(max_retries=2, backoff=2)
+def sec_api_call(sec_url):
+    return requests.get(sec_url, headers=HEADERS, timeout=15)
+
+@retry_on_exception(max_retries=2, backoff=2)
+def wikipedia_api_call(wikipedia_url, wiki_params):
+    return requests.get(wikipedia_url, params=wiki_params, timeout=10)
+
+@retry_on_exception(max_retries=2, backoff=2)
+def newsapi_call(newsapi, query):
+    return newsapi.get_everything(q=query, language='en', sort_by='relevancy', page_size=5)
+
 def search_google(query):
     try:
         formatted_results = []
@@ -103,11 +163,10 @@ def search_google(query):
             "key": GOOGLE_API_KEY,
             "cx": SEARCH_ENGINE_ID,
             "q": query,
-            "num": 10,
+            "num": 5,
         }
         try:
-            response = requests.get(google_search_url, params=google_params, timeout=15)
-            response.raise_for_status()
+            response = google_search_api_call(google_search_url, google_params)
             data = response.json()
             google_urls = []
             for i, item in enumerate(data.get("items", [])):
@@ -115,7 +174,7 @@ def search_google(query):
                     f"[Google Result {i + 1}] {item['title']} - {item['displayLink']}\n{item['snippet']}"
                 )
                 google_urls.append(item['link'])
-        except requests.RequestException as e:
+        except Exception as e:
             logging.error(f"Google Search Error: {e}")
             formatted_results.append(f"Google Search Error: {str(e)}")
             google_urls = []
@@ -133,18 +192,16 @@ def search_google(query):
         try:
             encoded_query = urllib.parse.quote(query)
             arxiv_url = f"http://export.arxiv.org/api/query?search_query=all:{encoded_query}&start=0&max_results=3"
-            req = urllib.request.Request(arxiv_url, headers=HEADERS)
-            with urllib.request.urlopen(req, timeout=15) as response:
-                xml_data = response.read().decode("utf-8")
-                root = ET.fromstring(xml_data)
-                ns = {'arxiv': 'http://www.w3.org/2005/Atom'}
-                entries = root.findall('arxiv:entry', ns)
-                for i, entry in enumerate(entries):
-                    title = entry.find('arxiv:title', ns)
-                    summary = entry.find('arxiv:summary', ns)
-                    title_text = title.text.strip() if title is not None else "No title"
-                    summary_text = summary.text.strip()[:300] + "..." if summary is not None else "No summary"
-                    formatted_results.append(f"[ArXiv Result {i + 1}] {title_text}\nSummary: {summary_text}")
+            xml_data = arxiv_api_call(arxiv_url)
+            root = ET.fromstring(xml_data)
+            ns = {'arxiv': 'http://www.w3.org/2005/Atom'}
+            entries = root.findall('arxiv:entry', ns)
+            for i, entry in enumerate(entries):
+                title = entry.find('arxiv:title', ns)
+                summary = entry.find('arxiv:summary', ns)
+                title_text = title.text.strip() if title is not None else "No title"
+                summary_text = summary.text.strip()[:300] + "..." if summary is not None else "No summary"
+                formatted_results.append(f"[ArXiv Result {i + 1}] {title_text}\nSummary: {summary_text}")
         except Exception as e:
             logging.error(f"ArXiv Search Error: {e}")
             formatted_results.append(f"ArXiv Search Error: {str(e)}")
@@ -152,7 +209,7 @@ def search_google(query):
         # --- NewsAPI Search ---
         try:
             newsapi = NewsApiClient(api_key=NEWSAPI_KEY)
-            articles = newsapi.get_everything(q=query, language='en', sort_by='relevancy', page_size=5)
+            articles = newsapi_call(newsapi, query)
             for i, article in enumerate(articles.get("articles", [])):
                 formatted_results.append(
                     f"[News {i + 1}] {article['title']} ({article['source']['name']})\n{article['description']}\nURL: {article['url']}"
@@ -164,7 +221,7 @@ def search_google(query):
         # --- SEC API (General Data Search) ---
         try:
             sec_url = f"https://www.sec.gov/cgi-bin/browse-edgar?company={urllib.parse.quote(query)}&action=getcompany"
-            sec_response = requests.get(sec_url, headers=HEADERS, timeout=15)
+            sec_response = sec_api_call(sec_url)
             if sec_response.status_code == 200:
                 if "No matching companies" in sec_response.text:
                     formatted_results.append(f"SEC API: No filings found for '{query}'.")
@@ -187,7 +244,7 @@ def search_google(query):
                 "exintro": True,
                 "explaintext": True
             }
-            wiki_response = requests.get(wikipedia_url, params=wiki_params, timeout=10)
+            wiki_response = wikipedia_api_call(wikipedia_url, wiki_params)
             if wiki_response.status_code == 200:
                 wiki_data = wiki_response.json()
                 pages = wiki_data.get("query", {}).get("pages", {})
@@ -203,6 +260,8 @@ def search_google(query):
 
         # --- Ensure crawled results are included in output ---
         all_results = formatted_results + crawled_data
+        # Remove empty entries
+        all_results = [r for r in all_results if r and r.strip()]
         return "\n\n".join(all_results)
 
     except Exception as e:
