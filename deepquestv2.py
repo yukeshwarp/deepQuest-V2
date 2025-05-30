@@ -82,7 +82,7 @@ def execute_step(step, context):
     else:
         return msg.content
 
-def agentic_research(query, max_replan_rounds=5, max_total_steps=20):
+def agentic_research(query, max_replan_rounds=3, max_total_steps=20):
     # 1. Plan
     steps = plan_research(query)
     plan_container = st.empty()
@@ -94,9 +94,10 @@ def agentic_research(query, max_replan_rounds=5, max_total_steps=20):
     completed_steps = []
     i = 0
     replan_rounds = 0
+    replan_limit_reached = False
     while i < len(steps):
         if len(steps) > max_total_steps:
-            st.warning("Maximum total steps reached. Stopping to prevent infinite loop.")
+            st.warning("Maximum total steps reached. Completing available steps to prevent infinite loop.")
             break
         step = steps[i]
         result = execute_step(step, context)
@@ -113,37 +114,38 @@ def agentic_research(query, max_replan_rounds=5, max_total_steps=20):
         plan_container.write("\n".join(plan_lines))
 
         # Replanning: Only check after the last original or newly added step
-        replan_prompt = (
-            f"Given the completed steps and results so far:\n{context}\n\n"
-            "As an autonomous agent, do you need to add any new steps to fully answer the original query? "
-            "If yes, list them as a numbered list. If not, reply 'No additional steps needed.'"
-        )
-        replan_response = client.chat.completions.create(
-            model="gpt-4.1",
-            messages=[
-                {"role": "system", "content": "You are a research planning assistant."},
-                {"role": "user", "content": replan_prompt}
-            ]
-        )
-        replan_text = replan_response.choices[0].message.content.strip().lower()
-        if "no additional steps needed" in replan_text:
-            i += 1
-            replan_rounds = 0  # Reset replan rounds if no new steps
-            continue
-        # Parse new steps, avoid duplicates
-        new_steps = [s.strip() for s in replan_text.split("\n") if s.strip() and s[0].isdigit()]
-        new_unique_steps = [new_step for new_step in new_steps if new_step not in steps]
-        if new_unique_steps:
-            steps.extend(new_unique_steps)
-            replan_rounds += 1
-            if replan_rounds > max_replan_rounds:
-                st.warning("Maximum replanning rounds reached. Stopping to prevent infinite loop.")
-                break
-        else:
-            replan_rounds += 1
-            if replan_rounds > max_replan_rounds:
-                st.warning("Maximum replanning rounds reached (no new unique steps). Stopping to prevent infinite loop.")
-                break
+        if not replan_limit_reached:
+            replan_prompt = (
+                f"Given the completed steps and results so far:\n{context}\n\n"
+                "As an autonomous agent, do you need to add any new steps to fully answer the original query? "
+                "If yes, list them as a numbered list. If not, reply 'No additional steps needed.'"
+            )
+            replan_response = client.chat.completions.create(
+                model="gpt-4.1",
+                messages=[
+                    {"role": "system", "content": "You are a research planning assistant."},
+                    {"role": "user", "content": replan_prompt}
+                ]
+            )
+            replan_text = replan_response.choices[0].message.content.strip().lower()
+            if "no additional steps needed" in replan_text:
+                i += 1
+                replan_rounds = 0  # Reset replan rounds if no new steps
+                continue
+            # Parse new steps, avoid duplicates
+            new_steps = [s.strip() for s in replan_text.split("\n") if s.strip() and s[0].isdigit()]
+            new_unique_steps = [new_step for new_step in new_steps if new_step not in steps]
+            if new_unique_steps:
+                steps.extend(new_unique_steps)
+                replan_rounds += 1
+                if replan_rounds > max_replan_rounds:
+                    st.warning("Maximum replanning rounds reached. Will finish executing current plan and stop replanning.")
+                    replan_limit_reached = True
+            else:
+                replan_rounds += 1
+                if replan_rounds > max_replan_rounds:
+                    st.warning("Maximum replanning rounds reached (no new unique steps). Will finish executing current plan and stop replanning.")
+                    replan_limit_reached = True
         i += 1  # Always increment to move to the next step
 
     # 3. Final synthesis/report
