@@ -26,7 +26,7 @@ def plan_research(query):
         ]
     )
     plan_text = response.choices[0].message.content
-    steps = [step.strip() for step in plan_text.split("\n") if step.strip() and step[0].isdigit()]
+    steps = [step[2:].strip() for step in plan_text.split("\n") if step.strip() and step[0].isdigit()]
     return steps
 
 def execute_step(step, context):
@@ -85,9 +85,12 @@ def execute_step(step, context):
 def agentic_research(query, max_replan_rounds=3, max_total_steps=20):
     # 1. Plan
     steps = plan_research(query)
-    plan_container = st.empty()
-    plan_lines = [f"**Step {idx+1}:** {step}\n" for idx, step in enumerate(steps)]
-    plan_container.write("\n".join(plan_lines))
+    # Sidebar for steps
+    sidebar_steps = st.sidebar.empty()
+    # plan_container = st.empty()
+    # plan_lines = [f"**Step {idx+1}:** {step}\n" for idx, step in enumerate(steps)]
+    # plan_container.write("\n".join(plan_lines))
+    sidebar_steps.markdown("### Research Steps\n" + "\n".join([f"{idx+1}. {step}" for idx, step in enumerate(steps)]))
 
     # 2. Execute steps, allow dynamic replanning if needed
     context = ""
@@ -111,7 +114,11 @@ def agentic_research(query, max_replan_rounds=3, max_total_steps=20):
                 plan_lines.append(f"✅ **Step {idx+1}:** {s}\n")
             else:
                 plan_lines.append(f"**Step {idx+1}:** {s}\n")
-        plan_container.write("\n".join(plan_lines))
+        # plan_container.write("\n".join(plan_lines))
+        sidebar_steps.markdown("### Research Steps\n" + "\n".join([
+            f"✅ {idx+1}. {s}\n" if idx < len(completed_steps) else f"{idx+1}. {s}"
+            for idx, s in enumerate(steps)
+        ]))
 
         # Replanning: Only check after the last original or newly added step
         if not replan_limit_reached:
@@ -133,7 +140,7 @@ def agentic_research(query, max_replan_rounds=3, max_total_steps=20):
                 replan_rounds = 0  # Reset replan rounds if no new steps
                 continue
             # Parse new steps, avoid duplicates
-            new_steps = [s.strip() for s in replan_text.split("\n") if s.strip() and s[0].isdigit()]
+            new_steps = [s[2:].strip() for s in replan_text.split("\n") if s.strip() and s[0].isdigit()]
             new_unique_steps = [new_step for new_step in new_steps if new_step not in steps]
             if new_unique_steps:
                 steps.extend(new_unique_steps)
