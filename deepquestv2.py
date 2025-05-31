@@ -2,97 +2,25 @@ import streamlit as st
 from web_agent import search_google
 from dotenv import load_dotenv
 from config import client
+from planner import plan_research
+from stepexecutor import execute_step
+# import pypandoc
+from io import BytesIO
+from docx import Document
+# import tempfile
 
 load_dotenv()
+# pypandoc.download_pandoc()
 
 st.title("deepQuest v2")
 
 query = st.text_input("Enter your research query:")
 
-def plan_research(query):
-    """Ask the LLM to generate a step-by-step research plan for the query."""
-    plan_prompt = (
-        "You are an expert research agent. "
-        "Given the following user query, create a clear, step-by-step research plan. "
-        "Each step should be actionable and focused on gathering or synthesizing information needed to answer the query. "
-        "Do not add unnecessary steps. Return the plan as a numbered list.\n\n"
-        f"User Query: {query}"
-    )
-    response = client.chat.completions.create(
-        model="gpt-4.1",
-        messages=[
-            {"role": "system", "content": "You are a research planning assistant."},
-            {"role": "user", "content": plan_prompt}
-        ]
-    )
-    plan_text = response.choices[0].message.content
-    steps = [step[2:].strip() for step in plan_text.split("\n") if step.strip() and step[0].isdigit()]
-    return steps
-
-def execute_step(step, context):
-    """Execute a single research step using function calling and web search."""
-    exec_prompt = (
-        f"You are an autonomous research agent. Execute the following research step:\n\n"
-        f"Step: {step}\n\n"
-        f"Context so far: {context}\n\n"
-        "If you need up-to-date information, use the search_google function."
-    )
-    functions = [
-        {
-            "name": "search_google",
-            "description": "Searches Google and returns relevant web results for a query.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query for Google."
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    ]
-    messages = [
-        {"role": "system", "content": "You are a research execution agent."},
-        {"role": "user", "content": exec_prompt}
-    ]
-    response = client.chat.completions.create(
-        model="gpt-4.1",
-        messages=messages,
-        functions=functions,
-        function_call="auto"
-    )
-    msg = response.choices[0].message
-
-    if msg.function_call and msg.function_call.name == "search_google":
-        import json
-        search_args = json.loads(msg.function_call.arguments)
-        web_results = search_google(search_args["query"])
-        messages.append({
-            "role": "function",
-            "name": "search_google",
-            "content": web_results
-        })
-        response2 = client.chat.completions.create(
-            model="gpt-4.1",
-            messages=messages
-        )
-        return response2.choices[0].message.content
-    else:
-        return msg.content
-
 def agentic_research(query, max_replan_rounds=3, max_total_steps=20):
-    # 1. Plan
     steps = plan_research(query)
-    # Sidebar for steps
     sidebar_steps = st.sidebar.empty()
-    # plan_container = st.empty()
-    # plan_lines = [f"**Step {idx+1}:** {step}\n" for idx, step in enumerate(steps)]
-    # plan_container.write("\n".join(plan_lines))
     sidebar_steps.markdown("### Research Steps\n" + "\n".join([f"{idx+1}. {step}" for idx, step in enumerate(steps)]))
 
-    # 2. Execute steps, allow dynamic replanning if needed
     context = ""
     completed_steps = []
     i = 0
@@ -114,7 +42,6 @@ def agentic_research(query, max_replan_rounds=3, max_total_steps=20):
                 plan_lines.append(f"✅ **Step {idx+1}:** {s}\n")
             else:
                 plan_lines.append(f"**Step {idx+1}:** {s}\n")
-        # plan_container.write("\n".join(plan_lines))
         sidebar_steps.markdown("### Research Steps\n" + "\n".join([
             f"✅ {idx+1}. {s}\n" if idx < len(completed_steps) else f"{idx+1}. {s}"
             for idx, s in enumerate(steps)
@@ -171,8 +98,32 @@ def agentic_research(query, max_replan_rounds=3, max_total_steps=20):
     report = report_response.choices[0].message.content
     return report
 
+def generate_word_doc(report_text, filename="deepquest_report.docx"):
+    doc = Document()
+    doc.add_heading("DeepQuest Research Report", 0)
+    for para in report_text.split('\n'):
+        doc.add_paragraph(para)
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+# def generate_word_doc_from_markdown(markdown_text):
+#     with tempfile.NamedTemporaryFile(suffix=".docx") as tmp:
+#         pypandoc.convert_text(markdown_text, 'docx', format='md', outputfile=tmp.name)
+#         tmp.seek(0)
+#         return BytesIO(tmp.read())
+
 if st.button("Research") and query:
     with st.spinner("Running agentic research..."):
         report = agentic_research(query)
         st.subheader("Final Research Report")
         st.write(report)
+        # Download button for Word document
+        word_buffer = generate_word_doc(report)
+        st.download_button(
+            label="Download Report as Word Document",
+            data=word_buffer,
+            file_name="deepquest_report.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
