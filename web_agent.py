@@ -14,8 +14,7 @@ import time
 
 # Setup logging
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
 # Load environment variables from .env
@@ -40,7 +39,9 @@ def retry_on_exception(max_retries=2, backoff=2):
                     return func(*args, **kwargs)
                 except Exception as e:
                     last_exception = e
-                    logging.warning(f"Attempt {attempt+1} failed for {func.__name__}: {e}")
+                    logging.warning(
+                        f"Attempt {attempt+1} failed for {func.__name__}: {e}"
+                    )
                     if attempt < max_retries:
                         time.sleep(backoff)
             logging.error(f"All retries failed for {func.__name__}: {last_exception}")
@@ -56,7 +57,9 @@ async def async_retry_on_exception(func, *args, max_retries=2, backoff=2, **kwar
             return await func(*args, **kwargs)
         except Exception as e:
             last_exception = e
-            logging.warning(f"Async attempt {attempt+1} failed for {func.__name__}: {e}")
+            logging.warning(
+                f"Async attempt {attempt+1} failed for {func.__name__}: {e}"
+            )
             if attempt < max_retries:
                 await asyncio.sleep(backoff)
     logging.error(f"All async retries failed for {func.__name__}: {last_exception}")
@@ -65,7 +68,6 @@ async def async_retry_on_exception(func, *args, max_retries=2, backoff=2, **kwar
 # --- Asynchronous Utilities ---
 
 async def fetch_url(session, url, timeout=10):
-    """Fetch the URL asynchronously and return the page content."""
     try:
         async with session.get(url, timeout=timeout) as response:
             if response.status == 200:
@@ -81,40 +83,55 @@ async def fetch_url(session, url, timeout=10):
         return None
 
 async def crawl_websites(urls, timeout=10):
-    """Crawl the top relevant websites asynchronously."""
     crawled_results = []
     try:
         async with aiohttp.ClientSession() as session:
-            tasks = [async_retry_on_exception(fetch_url, session, url, timeout=timeout) for url in urls]
+            tasks = [
+                async_retry_on_exception(fetch_url, session, url, timeout=timeout)
+                for url in urls
+            ]
             responses = await asyncio.gather(*tasks, return_exceptions=True)
             for idx, content in enumerate(responses):
                 if isinstance(content, Exception):
                     logging.error(f"Exception during crawling {urls[idx]}: {content}")
-                    crawled_results.append(f"[Crawled Website {idx + 1}] Error fetching content: {content}")
+                    crawled_results.append(
+                        f"[Crawled Website {idx + 1}] Error fetching content: {content}"
+                    )
                 elif content:
-                    soup = BeautifulSoup(content, 'html.parser')
-                    title = soup.title.string if soup.title else 'No title found'
-                    description = soup.find('meta', attrs={'name': 'description'})
-                    description = description['content'] if description else 'No description found'
-                    crawled_results.append(f"[Crawled Website {idx + 1}] {title}\nDescription: {description}")
+                    soup = BeautifulSoup(content, "html.parser")
+                    title = soup.title.string if soup.title else "No title found"
+                    description = soup.find("meta", attrs={"name": "description"})
+                    description = (
+                        description["content"]
+                        if description
+                        else "No description found"
+                    )
+                    crawled_results.append(
+                        f"[Crawled Website {idx + 1}] {title}\nDescription: {description}"
+                    )
                 else:
-                    crawled_results.append(f"[Crawled Website {idx + 1}] Error fetching content")
+                    crawled_results.append(
+                        f"[Crawled Website {idx + 1}] Error fetching content"
+                    )
     except Exception as e:
         logging.error(f"Error in crawl_websites: {e}")
     return crawled_results
 
 async def crawl_with_async_webcrawler(urls, timeout=20):
-    """Use AsyncWebCrawler to crawl through URLs and return markdown content."""
     crawl_results = []
     try:
         async with AsyncWebCrawler() as crawler:
             for url in urls:
                 try:
                     result = await asyncio.wait_for(
-                        async_retry_on_exception(crawler.arun, url=url, max_retries=2, backoff=2),
-                        timeout=timeout
+                        async_retry_on_exception(
+                            crawler.arun, url=url, max_retries=2, backoff=2
+                        ),
+                        timeout=timeout,
                     )
-                    crawl_results.append(f"[Crawled Website (Markdown)] URL: {url}\n{result.markdown}\n")
+                    crawl_results.append(
+                        f"[Crawled Website (Markdown)] URL: {url}\n{result.markdown}\n"
+                    )
                 except asyncio.TimeoutError:
                     logging.error(f"Timeout crawling {url} with AsyncWebCrawler")
                     crawl_results.append(f"[Crawling Error] URL: {url} Error: Timeout")
@@ -129,27 +146,49 @@ async def crawl_with_async_webcrawler(urls, timeout=20):
 
 @retry_on_exception(max_retries=2, backoff=2)
 def google_search_api_call(google_search_url, google_params):
-    response = requests.get(google_search_url, params=google_params, timeout=15)
-    response.raise_for_status()
-    return response
+    try:
+        response = requests.get(google_search_url, params=google_params, timeout=15)
+        response.raise_for_status()
+        return response
+    except Exception as e:
+        logging.error(f"Error in google_search_api_call: {e}")
+        raise
 
 @retry_on_exception(max_retries=2, backoff=2)
 def arxiv_api_call(arxiv_url):
-    req = urllib.request.Request(arxiv_url, headers=HEADERS)
-    with urllib.request.urlopen(req, timeout=15) as response:
-        return response.read().decode("utf-8")
+    try:
+        req = urllib.request.Request(arxiv_url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=15) as response:
+            return response.read().decode("utf-8")
+    except Exception as e:
+        logging.error(f"Error in arxiv_api_call: {e}")
+        raise
 
 @retry_on_exception(max_retries=2, backoff=2)
 def sec_api_call(sec_url):
-    return requests.get(sec_url, headers=HEADERS, timeout=15)
+    try:
+        return requests.get(sec_url, headers=HEADERS, timeout=15)
+    except Exception as e:
+        logging.error(f"Error in sec_api_call: {e}")
+        raise
 
 @retry_on_exception(max_retries=2, backoff=2)
 def wikipedia_api_call(wikipedia_url, wiki_params):
-    return requests.get(wikipedia_url, params=wiki_params, timeout=10)
+    try:
+        return requests.get(wikipedia_url, params=wiki_params, timeout=10)
+    except Exception as e:
+        logging.error(f"Error in wikipedia_api_call: {e}")
+        raise
 
 @retry_on_exception(max_retries=2, backoff=2)
 def newsapi_call(newsapi, query):
-    return newsapi.get_everything(q=query, language='en', sort_by='relevancy', page_size=5)
+    try:
+        return newsapi.get_everything(
+            q=query, language="en", sort_by="relevancy", page_size=5
+        )
+    except Exception as e:
+        logging.error(f"Error in newsapi_call: {e}")
+        raise
 
 def search_google(query):
     try:
@@ -173,7 +212,7 @@ def search_google(query):
                 formatted_results.append(
                     f"[Google Result {i + 1}] {item['title']} - {item['displayLink']}\n{item['snippet']}"
                 )
-                google_urls.append(item['link'])
+                google_urls.append(item["link"])
         except Exception as e:
             logging.error(f"Google Search Error: {e}")
             formatted_results.append(f"Google Search Error: {str(e)}")
@@ -194,14 +233,20 @@ def search_google(query):
             arxiv_url = f"http://export.arxiv.org/api/query?search_query=all:{encoded_query}&start=0&max_results=3"
             xml_data = arxiv_api_call(arxiv_url)
             root = ET.fromstring(xml_data)
-            ns = {'arxiv': 'http://www.w3.org/2005/Atom'}
-            entries = root.findall('arxiv:entry', ns)
+            ns = {"arxiv": "http://www.w3.org/2005/Atom"}
+            entries = root.findall("arxiv:entry", ns)
             for i, entry in enumerate(entries):
-                title = entry.find('arxiv:title', ns)
-                summary = entry.find('arxiv:summary', ns)
+                title = entry.find("arxiv:title", ns)
+                summary = entry.find("arxiv:summary", ns)
                 title_text = title.text.strip() if title is not None else "No title"
-                summary_text = summary.text.strip()[:300] + "..." if summary is not None else "No summary"
-                formatted_results.append(f"[ArXiv Result {i + 1}] {title_text}\nSummary: {summary_text}")
+                summary_text = (
+                    summary.text.strip()[:300] + "..."
+                    if summary is not None
+                    else "No summary"
+                )
+                formatted_results.append(
+                    f"[ArXiv Result {i + 1}] {title_text}\nSummary: {summary_text}"
+                )
         except Exception as e:
             logging.error(f"ArXiv Search Error: {e}")
             formatted_results.append(f"ArXiv Search Error: {str(e)}")
@@ -224,11 +269,17 @@ def search_google(query):
             sec_response = sec_api_call(sec_url)
             if sec_response.status_code == 200:
                 if "No matching companies" in sec_response.text:
-                    formatted_results.append(f"SEC API: No filings found for '{query}'.")
+                    formatted_results.append(
+                        f"SEC API: No filings found for '{query}'."
+                    )
                 else:
-                    formatted_results.append(f"SEC API: Filings and data retrieved for {query}. Check SEC's website for details.")
+                    formatted_results.append(
+                        f"SEC API: Filings and data retrieved for {query}. Check SEC's website for details."
+                    )
             else:
-                formatted_results.append(f"SEC API Error: {sec_response.status_code} - Unable to retrieve data from SEC.")
+                formatted_results.append(
+                    f"SEC API Error: {sec_response.status_code} - Unable to retrieve data from SEC."
+                )
         except Exception as e:
             logging.error(f"SEC API Error: {e}")
             formatted_results.append(f"SEC API Error: {str(e)}")
@@ -242,7 +293,7 @@ def search_google(query):
                 "titles": query,
                 "format": "json",
                 "exintro": True,
-                "explaintext": True
+                "explaintext": True,
             }
             wiki_response = wikipedia_api_call(wikipedia_url, wiki_params)
             if wiki_response.status_code == 200:
@@ -253,17 +304,18 @@ def search_google(query):
                     if extract:
                         formatted_results.append(f"[Wikipedia]\n{extract}")
             else:
-                formatted_results.append(f"Wikipedia Error: {wiki_response.status_code}")
+                formatted_results.append(
+                    f"Wikipedia Error: {wiki_response.status_code}"
+                )
         except Exception as e:
             logging.error(f"Wikipedia Error: {e}")
             formatted_results.append(f"Wikipedia Error: {str(e)}")
 
         # --- Ensure crawled results are included in output ---
         all_results = formatted_results + crawled_data
-        # Remove empty entries
         all_results = [r for r in all_results if r and r.strip()]
         return "\n\n".join(all_results)
 
     except Exception as e:
-        logging.critical(f"Unexpected error occurred: {e}")
-        return f"Unexpected error occurred: {str(e)}"
+        logging.critical(f"Unexpected error occurred in search_google: {e}")
+        return "An unexpected error occurred. Please try again later."
