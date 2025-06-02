@@ -9,3 +9,4 @@ python-docx
 asyncio
 crawl4ai
 beautifulsoup4
+Markdown
