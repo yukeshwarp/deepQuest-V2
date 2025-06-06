@@ -8,6 +8,8 @@ from docx import Document
 from bs4 import BeautifulSoup
 import markdown as md
 import logging
+import json
+import os
 
 load_dotenv()
 
@@ -18,6 +20,37 @@ logging.basicConfig(
 
 st.title("deepQuest v2")
 st.sidebar.title("Research Steps")
+
+# --- Q-Learning for Optimal Step Count ---
+Q_FILE = "q_learning_steps.json"
+DEFAULT_Q = 0.0
+ALPHA = 0.5  # learning rate
+GAMMA = 0.9  # discount factor
+
+def load_q_table():
+    if os.path.exists(Q_FILE):
+        with open(Q_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+def save_q_table(q_table):
+    with open(Q_FILE, "w", encoding="utf-8") as f:
+        json.dump(q_table, f, indent=2)
+
+def choose_step_count(q_table):
+    # Discrete choices for max steps (can be tuned)
+    possible_steps = [5, 10, 15, 20]
+    # Pick the step count with the highest Q value, or random if not learned yet
+    best_steps = max(possible_steps, key=lambda s: q_table.get(str(s), DEFAULT_Q))
+    return best_steps
+
+def update_q_table(q_table, step_count, reward):
+    step_count = str(step_count)
+    old_q = q_table.get(step_count, DEFAULT_Q)
+    # Q-learning update rule (no next state, so just immediate reward)
+    new_q = old_q + ALPHA * (reward - old_q)
+    q_table[step_count] = new_q
+    save_q_table(q_table)
 
 def generate_word_doc_from_markdown(markdown_text):
     try:
@@ -69,23 +102,25 @@ if "context" not in st.session_state:
     st.session_state.context = ""
 if "report" not in st.session_state:
     st.session_state.report = None
+if "max_steps" not in st.session_state:
+    st.session_state.max_steps = 20  # default
+
+# --- Q-Learning Table ---
+q_table = load_q_table()
+optimal_steps = choose_step_count(q_table)
+st.session_state.max_steps = optimal_steps
 
 query = st.chat_input("Enter your research query:")
 
-# ...existing imports and setup...
-
-# query = st.chat_input("Enter your research query:")
 if not st.session_state.steps or st.session_state.query != query:
-            st.session_state.steps = plan_research(query)
-            st.session_state.completed_steps = []
-            st.session_state.context = ""
-            st.session_state.report = None
-
+    st.session_state.steps = plan_research(query)
+    st.session_state.completed_steps = []
+    st.session_state.context = ""
+    st.session_state.report = None
 
 if query:
     st.session_state.query = query
     try:
-        # Only re-plan if the query changed or steps 
         steps = st.session_state.steps
         sidebar_steps = st.sidebar.empty()
         sidebar_steps.markdown(
@@ -102,9 +137,9 @@ if query:
         progress_bar = st.progress(0, text="Starting research steps...")
 
         while i < len(steps):
-            if len(steps) > 20 and not max_steps_warning_shown:
+            if len(steps) > st.session_state.max_steps and not max_steps_warning_shown:
                 st.warning(
-                    "Maximum total steps reached. No further replanning will be done, but all planned steps will be executed."
+                    f"Maximum total steps ({st.session_state.max_steps}) reached. No further replanning will be done, but all planned steps will be executed."
                 )
                 max_steps_warning_shown = True
                 replan_limit_reached = True
@@ -189,3 +224,18 @@ if st.session_state.report:
         )
     else:
         st.error("Brain down, try again shortly!")
+
+    # --- User Feedback for Q-Learning ---
+    st.markdown("---")
+    st.markdown(f"### Feedback: Was the number of steps ({st.session_state.max_steps}) optimal?")
+    feedback = st.radio(
+        "Was this report helpful?",
+        ("👍 Yes", "👎 No"),
+        horizontal=True,
+        key="feedback_radio"
+    )
+    if st.button("Submit Feedback", key="feedback_btn"):
+        # Reward: +1 for thumbs up, -1 for thumbs down
+        reward = 1 if feedback == "👍 Yes" else -1
+        update_q_table(q_table, st.session_state.max_steps, reward)
+        st.success("Thank you for your feedback! The system will learn and adapt the number of steps for future queries.")

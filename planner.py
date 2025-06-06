@@ -2,6 +2,7 @@ import streamlit as st
 from web_agent import search_google
 from dotenv import load_dotenv
 from config import client
+import logging
 
 load_dotenv()
 
@@ -62,14 +63,14 @@ def replanner(context, steps, replan_rounds, max_replan_rounds, replan_limit_rea
         steps.extend(new_unique_steps)
         replan_rounds += 1
         if replan_rounds > max_replan_rounds:
-            st.warning(
+            logging.info(
                 "Maximum replanning rounds reached. Will finish executing current plan and stop replanning."
             )
             replan_limit_reached = True
     else:
         replan_rounds += 1
         if replan_rounds > max_replan_rounds:
-            st.warning(
+            logging.info(
                 "Maximum replanning rounds reached (no new unique steps). Will finish executing current plan and stop replanning."
             )
             replan_limit_reached = True
