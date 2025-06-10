@@ -70,22 +70,24 @@ if "context" not in st.session_state:
 if "report" not in st.session_state:
     st.session_state.report = None
 
-query = st.chat_input("Enter your research query:")
+# query = st.chat_input("Enter your research query:")
 
 # ...existing imports and setup...
 
-# query = st.chat_input("Enter your research query:")
-if not st.session_state.steps or st.session_state.query != query:
-            st.session_state.steps = plan_research(query)
-            st.session_state.completed_steps = []
-            st.session_state.context = ""
-            st.session_state.report = None
+query = st.chat_input("Enter your research query:")
 
+# Set your max_steps dynamically or statically as needed
+max_steps = 20  # Or use a value from Q-learning or user input
+
+if not st.session_state.steps or st.session_state.query != query:
+    st.session_state.steps = plan_research(query, max_steps=max_steps)
+    st.session_state.completed_steps = []
+    st.session_state.context = ""
+    st.session_state.report = None
 
 if query:
     st.session_state.query = query
     try:
-        # Only re-plan if the query changed or steps 
         steps = st.session_state.steps
         sidebar_steps = st.sidebar.empty()
         sidebar_steps.markdown(
@@ -102,9 +104,9 @@ if query:
         progress_bar = st.progress(0, text="Starting research steps...")
 
         while i < len(steps):
-            if len(steps) > 20 and not max_steps_warning_shown:
+            if len(steps) > max_steps and not max_steps_warning_shown:
                 st.warning(
-                    "Maximum total steps reached. No further replanning will be done, but all planned steps will be executed."
+                    f"Maximum total steps ({max_steps}) reached. No further replanning will be done, but all planned steps will be executed."
                 )
                 max_steps_warning_shown = True
                 replan_limit_reached = True
@@ -151,7 +153,7 @@ if query:
             if not replan_limit_reached:
                 try:
                     steps, replan_rounds, replan_limit_reached = replanner(
-                        context, steps, replan_rounds, 3, replan_limit_reached
+                        context, steps, replan_rounds, 3, replan_limit_reached, max_steps=max_steps
                     )
                     st.session_state.steps = steps
                 except Exception as e:

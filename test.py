@@ -10,6 +10,7 @@ import markdown as md
 import logging
 import json
 import os
+import random
 
 load_dotenv()
 
@@ -21,11 +22,24 @@ logging.basicConfig(
 st.title("deepQuest v2")
 st.sidebar.title("Research Steps")
 
-# --- Q-Learning for Optimal Step Count ---
+# --- Q-Learning for Optimal Step Count with State ---
 Q_FILE = "q_learning_steps.json"
 DEFAULT_Q = 0.0
 ALPHA = 0.5  # learning rate
 GAMMA = 0.9  # discount factor
+EPSILON = 0.2  # exploration rate
+
+def get_state(query):
+    # Example: use query length as a simple state feature (customize as needed)
+    if not query:
+        return "empty"
+    length = len(query.split())
+    if length < 5:
+        return "short"
+    elif length < 15:
+        return "medium"
+    else:
+        return "long"
 
 def load_q_table():
     if os.path.exists(Q_FILE):
@@ -37,19 +51,21 @@ def save_q_table(q_table):
     with open(Q_FILE, "w", encoding="utf-8") as f:
         json.dump(q_table, f, indent=2)
 
-def choose_step_count(q_table):
-    # Discrete choices for max steps (can be tuned)
+def choose_step_count(q_table, state):
     possible_steps = [5, 10, 15, 20]
-    # Pick the step count with the highest Q value, or random if not learned yet
-    best_steps = max(possible_steps, key=lambda s: q_table.get(str(s), DEFAULT_Q))
+    # ε-greedy: explore with probability EPSILON
+    if random.random() < EPSILON:
+        return random.choice(possible_steps)
+    # Exploit: pick best known
+    best_steps = max(possible_steps, key=lambda s: q_table.get(f"{state}|{s}", DEFAULT_Q))
     return best_steps
 
-def update_q_table(q_table, step_count, reward):
-    step_count = str(step_count)
-    old_q = q_table.get(step_count, DEFAULT_Q)
-    # Q-learning update rule (no next state, so just immediate reward)
+def update_q_table(q_table, state, step_count, reward, next_state=None):
+    key = f"{state}|{step_count}"
+    old_q = q_table.get(key, DEFAULT_Q)
+    # Classical Q-learning update (no next state for this one-shot task)
     new_q = old_q + ALPHA * (reward - old_q)
-    q_table[step_count] = new_q
+    q_table[key] = new_q
     save_q_table(q_table)
 
 def generate_word_doc_from_markdown(markdown_text):
@@ -104,13 +120,19 @@ if "report" not in st.session_state:
     st.session_state.report = None
 if "max_steps" not in st.session_state:
     st.session_state.max_steps = 20  # default
+if "q_state" not in st.session_state:
+    st.session_state.q_state = "medium"
 
 # --- Q-Learning Table ---
 q_table = load_q_table()
-optimal_steps = choose_step_count(q_table)
-st.session_state.max_steps = optimal_steps
 
 query = st.chat_input("Enter your research query:")
+
+# Determine state for this query
+state = get_state(query)
+st.session_state.q_state = state
+optimal_steps = choose_step_count(q_table, state)
+st.session_state.max_steps = optimal_steps
 
 if not st.session_state.steps or st.session_state.query != query:
     st.session_state.steps = plan_research(query)
@@ -237,5 +259,5 @@ if st.session_state.report:
     if st.button("Submit Feedback", key="feedback_btn"):
         # Reward: +1 for thumbs up, -1 for thumbs down
         reward = 1 if feedback == "👍 Yes" else -1
-        update_q_table(q_table, st.session_state.max_steps, reward)
+        update_q_table(q_table, st.session_state.q_state, st.session_state.max_steps, reward)
         st.success("Thank you for your feedback! The system will learn and adapt the number of steps for future queries.")

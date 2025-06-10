@@ -7,13 +7,14 @@ import logging
 load_dotenv()
 
 
-def plan_research(query):
-    """Ask the LLM to generate a step-by-step research plan for the query."""
+def plan_research(query, max_steps=20):
+    """Ask the LLM to generate a step-by-step research plan for the query, with a dynamic max_steps limit."""
     plan_prompt = (
         "You are an expert research agent. "
-        "Given the following user query, create a clear, step-by-step research plan. "
-        "Each step should be actionable and focused on gathering or synthesizing information needed to answer the query. "
-        "Do not add unnecessary steps. Return the plan as a numbered list.\n\n"
+        f"Given the following user query, create a clear, step-by-step research plan. "
+        f"Each step should be actionable and focused on gathering or synthesizing information needed to answer the query. "
+        f"Do not add unnecessary steps. Return the plan as a numbered list. "
+        f"Do not exceed {max_steps} steps in your plan.\n\n"
         f"User Query: {query}"
     )
     response = client.chat.completions.create(
@@ -31,16 +32,16 @@ def plan_research(query):
     ]
     return steps
 
-
-def replanner(context, steps, replan_rounds, max_replan_rounds, replan_limit_reached):
-    """Handles replanning logic and returns updated steps, replan_rounds, and replan_limit_reached."""
+def replanner(context, steps, replan_rounds, max_replan_rounds, replan_limit_reached, max_steps=20):
+    """Handles replanning logic and returns updated steps, replan_rounds, and replan_limit_reached, with a dynamic max_steps limit."""
     if replan_limit_reached:
         return steps, replan_rounds, replan_limit_reached
 
     replan_prompt = (
         f"Given the completed steps and results so far:\n{context}\n\n"
-        "As an autonomous agent, do you need to add any new steps to fully answer the original query? "
-        "If yes, list them as a numbered list. If not, reply 'No additional steps needed.'"
+        f"As an autonomous agent, do you need to add any new steps to fully answer the original query? "
+        f"If yes, list them as a numbered list, but do not exceed a total of {max_steps} steps in the plan (including already completed and planned steps). "
+        f"If not, reply 'No additional steps needed.'"
     )
     replan_response = client.chat.completions.create(
         model="gpt-4.1",
@@ -54,11 +55,13 @@ def replanner(context, steps, replan_rounds, max_replan_rounds, replan_limit_rea
         replan_rounds = 0  # Reset replan rounds if no new steps
         return steps, replan_rounds, replan_limit_reached
 
-    # Parse new steps, avoid duplicates
+    # Parse new steps, avoid duplicates, and enforce max_steps
     new_steps = [
         s[2:].strip() for s in replan_text.split("\n") if s.strip() and s[0].isdigit()
     ]
-    new_unique_steps = [new_step for new_step in new_steps if new_step not in steps]
+    # Only add steps if total does not exceed max_steps
+    allowed_new_steps = new_steps[: max(0, max_steps - len(steps))]
+    new_unique_steps = [new_step for new_step in allowed_new_steps if new_step not in steps]
     if new_unique_steps:
         steps.extend(new_unique_steps)
         replan_rounds += 1
